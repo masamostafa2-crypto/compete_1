@@ -57,7 +57,7 @@ class Compete(Node):
         self.d = None
         self.create_subscription(Int32, '/ultrasonic_distance', self.ultra_cb, 10)
         self.bridge = CvBridge()
-        self.model = YOLO("yolov8n.pt")
+        self.model = YOLO("/home/masa/Downloads/best.pt")
         self.real_class = "real"
         self.fake_class = "fake"
         self.create_subscription(Image, '/mono/image', self.image_cb, 10)
@@ -71,7 +71,7 @@ class Compete(Node):
     def image_cb(self, msg):
         global containes_real, containes_fake
         cv_image = self.bridge.imgmsg_to_cv2(msg, 'mono8')
-        results = self.model(cv_image, verbose=False)
+        results = self.model(cv_image, verbose=False, device="cpu")
         for box in results[0].boxes:
             name = results[0].names[int(box.cls[0])]
             conf = float(box.conf[0])
