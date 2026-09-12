@@ -1,0 +1,3 @@
+[0.260s] WARNING:colcon.colcon_core.package_selection:ignoring unknown package 'auto_bot' in --packages-select
+
+Summary: 0 packages finished [0.31s]
