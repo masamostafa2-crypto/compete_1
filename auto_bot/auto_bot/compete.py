@@ -6,24 +6,24 @@ from std_msgs.msg import Int32
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
-# from ultralytics import YOLO
+from ultralytics import YOLO
 from enum import  Enum
 
 from auto_bot.manual import ManualController
 
 scanning_angle = 10.0
 scanning_duration = 0.5
-rotated_angle = 0
-max_linear = 6.0
-max_angular = 10.0
+rotated_angle = 0.0
+max_linear = 7.0
+max_angular = 7.0
 TIMEOUT = 5.0
 
-# hardcoded test values -- flip these to test different branches
-# (both True -> real_fake, one True -> real_only/fake_only, both False -> mission failed)
-containes_real = True
-containes_fake = False
-moving_forward_duration =3.0
-moving_left_duration =1.0
+
+#temporary conditions for boxes .CHANGE LATER 
+containes_real = False 
+containes_fake = False 
+moving_forward_duration =2.5
+moving_left_duration =2.0
 localize_duration = 0.5
 
 
@@ -54,45 +54,38 @@ class Compete(Node):
         super().__init__('compete')
         self.ultra_seen = False
         self.start_time = None
-        self.box_seen = False
         self.d = None
         self.create_subscription(Int32, '/ultrasonic_distance', self.ultra_cb, 10)
-        # self.bridge = CvBridge()
-        # self.model = YOLO("yolov8n.pt")
-        self.target_class = "suitcase"  # set to your real target class
+        self.bridge = CvBridge()
+        self.model = YOLO("yolov8n.pt")
         self.real_class = "real"
         self.fake_class = "fake"
-        # self.create_subscription(Image, '/mono/image', self.image_cb, 10)
+        self.create_subscription(Image, '/mono/image', self.image_cb, 10)
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        # self.vis_pub = self.create_publisher(Image, '/compete/detections', 10)
+        self.vis_pub = self.create_publisher(Image, '/compete/detections', 10)
 
     def ultra_cb(self, msg):
         self.ultra_seen = True
         self.d = msg.data
 
     def image_cb(self, msg):
-        pass
-        # global containes_real, containes_fake
-        # if self.box_seen:
-        #     return  # already found it, stop spending CPU on inference
-        # cv_image = self.bridge.imgmsg_to_cv2(msg, 'mono8')
-        # results = self.model(cv_image, verbose=False)
-        # for box in results[0].boxes:
-        #     name = results[0].names[int(box.cls[0])]
-        #     conf = float(box.conf[0])
-        #     if name == self.target_class and conf > 0.6:
-        #         self.box_seen = True
-        #     if name == self.real_class and conf > 0.6:
-        #         containes_real = True
-        #     if name == self.fake_class and conf > 0.6:
-        #         containes_fake = True
+        global containes_real, containes_fake
+        cv_image = self.bridge.imgmsg_to_cv2(msg, 'mono8')
+        results = self.model(cv_image, verbose=False)
+        for box in results[0].boxes:
+            name = results[0].names[int(box.cls[0])]
+            conf = float(box.conf[0])
+            if name == self.real_class and conf > 0.6:
+                containes_real = True
+            if name == self.fake_class and conf > 0.6:
+                containes_fake = True
 
-        # # Publish an annotated frame so detections can be viewed with:
-        # #   rqt_image_view /compete/detections
-        # annotated = results[0].plot()
-        # vis_msg = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
-        # vis_msg.header = msg.header
-        # self.vis_pub.publish(vis_msg)
+        # Publish an annotated frame so detections can be viewed with:
+        #   rqt_image_view /compete/detections
+        annotated = results[0].plot()
+        vis_msg = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
+        vis_msg.header = msg.header
+        self.vis_pub.publish(vis_msg)
 
     def wait_until(self, check_fn, timeout):
         """Spin the node while waiting for check_fn() to become True."""
@@ -103,27 +96,12 @@ class Compete(Node):
                 return True
         return False
 
-    def move_for(self, cmd, duration):
-        """Publish cmd repeatedly for duration seconds, then stop. Blocks until done."""
-        self.get_logger().info(f'Moving for {duration:.2f}s')
-        start = time.monotonic()
-        while time.monotonic() - start < duration:
-            self.cmd_vel_pub.publish(cmd)
-            time.sleep(0.1)
-        self.cmd_vel_pub.publish(Twist())
-
-    def wait_for(self, duration):
-        """Block for duration seconds without commanding any motion."""
-        self.get_logger().info(f'Waiting for {duration:.2f}s')
-        time.sleep(duration)
-
     def rotate(self, degrees):
         """Positive degrees = turn left (CCW), negative = turn right (CW)."""
         angle_rad = math.radians(degrees)
-        duration = abs(angle_rad) / max_angular
-        duration +=0.35
+        duration = (abs(angle_rad) * 1.2) / max_angular
         cmd = Twist()
-        cmd.angular.z = max_angular if degrees > 0 else -max_angular
+        cmd.angular.z = -max_angular if degrees > 0 else max_angular 
 
         self.get_logger().info(f'Rotating {degrees} degrees ({duration:.2f}s)')
         start = time.monotonic()
@@ -137,46 +115,66 @@ class Compete(Node):
         global rotated_angle, containes_real, containes_fake
         real = 0
         fake = 0
-  
+        d = self.d
         self.get_logger().info('Waiting for the robot to start...')
         if not self.wait_until(lambda: self.ultra_seen, TIMEOUT):
             self.get_logger().error('No /ultrasonic_distance -- robot did not start.')
             return False
-        d = self.d
         current_state = Status.moveLeft
         #moving left  - step1
+
         if current_state == Status.moveLeft :
+         if self.start_time is None:
+            self.start_time = time.time()
+            self.get_logger().info("Moving left for 1 second...")
+
+         while time.time() - self.start_time < moving_left_duration :
+            # Under 1 second: Create and publish the left movement command
             move_left = Twist()
             move_left.linear.y = max_linear # Positive Y moves to the left
-            self.move_for(move_left, moving_left_duration)
-            self.get_logger().info("moved left")
+            self.cmd_vel_pub.publish(move_left)
+            rclpy.spin_once(self, timeout_sec=0.05)
+         self.get_logger().info("moved left")
+         self.cmd_vel_pub.publish(Twist())
+         # Reset tracker and transition to a stop state
+         self.start_time = None 
 
-        # wait for localization time :
-        self.wait_for(localize_duration)
+        # wait for localization time :           
+        if self.start_time is None:
+          self.start_time = time.time()
+          self.get_logger().info(f"scanning for {localize_duration} second...")             
+        while time.time() - self.start_time < localize_duration:
+            rclpy.spin_once(self, timeout_sec=0.05)
+        # Reset tracker and transition to a stop state
+        self.start_time = None 
         current_state = Status.Rotate_90_1
+
 
 
         #scaning - step 2 :
         if current_state  == Status.Rotate_90_1 : 
-           while rotated_angle >=-90.0 :
+           while rotated_angle <=90.0 :
              count = 1
              self.get_logger().info(f"scanning .... moving{count} 10 degrees")
-             rotated_angle -=10.0
-             self.cmd_vel_pub.publish(Twist())
-             self.get_logger().info('Looking for box...')
-                #  if not self.wait_until(lambda: self.box_seen, TIMEOUT):
-                #self.get_logger().error('Box never detected.')
-                #return False # will change later
-
-
-            # model disabled for now -- containes_real / containes_fake are
-            # hardcoded at the top of the file for testing
-
-            #scanning wait 
-             self.wait_for(scanning_duration)
+             rotated_angle +=10.0
              self.rotate(scanning_angle)
              self.get_logger().info(f"rotated {rotated_angle} degrees")
+             
+             self.cmd_vel_pub.publish(Twist())
              count +=1
+             self.get_logger().info('Looking for box...')
+            # turn on the model
+            # updates containes_real / containes_fake
+             rclpy.spin_once(self, timeout_sec=0.1)
+
+            #scanning wait 
+             if self.start_time is None:
+                self.start_time = time.time()
+                self.get_logger().info(f"scanning for {scanning_duration} second...")
+             while time.time() - self.start_time < scanning_duration:
+                 rclpy.spin_once(self, timeout_sec=0.05)
+             # Reset tracker and transition to a stop state
+             self.start_time = None 
 
 
               #checking      
@@ -210,19 +208,33 @@ class Compete(Node):
 
         # moving forward 
         if current_state == Status.fake_only or current_state == Status.real_only :
-            if d > 10:
-              move_forward = Twist()
-              move_forward.linear.x = max_linear # Positive x to move forward
-              self.move_for(move_forward, moving_forward_duration)
+            if d >= 10:
+              if self.start_time is None:
+                self.start_time = time.time()
+                self.get_logger().info(f"Moving forward for {moving_forward_duration} second...")
+       
+              while time.time() - self.start_time < moving_forward_duration:
+                move_forward = Twist()
+                move_forward.linear.x = max_linear # Positive x to move forward
+                self.cmd_vel_pub.publish(move_forward)
+                rclpy.spin_once(self, timeout_sec=0.05)
               self.get_logger().info("moved forward")
-              # wait for localization time :
-              self.wait_for(localize_duration)
-              current_state = Status.Rotate_90_2
+              self.cmd_vel_pub.publish(Twist())
+              # Reset tracker and transition to a stop state
+              self.start_time = None 
+             # wait for localization time : 
+                                  
+              if self.start_time is None:
+                self.start_time = time.time()
+                self.get_logger().info(f"scanning for {localize_duration} second...")             
+              while time.time() - self.start_time < localize_duration:
+                  rclpy.spin_once(self, timeout_sec=0.05)
+              # Reset tracker and transition to a stop state
+              self.start_time = None 
             else :
               self.cmd_vel_pub.publish(Twist())
-              current_state = Status.Rotate_90_2
              
-       
+        current_state = Status.Rotate_90_2
 
 
         #rotating again to look for the other box 
@@ -233,14 +245,18 @@ class Compete(Node):
                 self.get_logger().info(f"rotated {rotated_angle} degrees")
                 self.cmd_vel_pub.publish(Twist())
                 self.get_logger().info('Looking for box...')
-                        #  if not self.wait_until(lambda: self.box_seen, TIMEOUT):
-                        #self.get_logger().error('Box never detected.')
-                        #return False # will change later
-                    # model disabled for now -- containes_real / containes_fake are
-                    # hardcoded at the top of the file for testing
+                    # and updates containes_real / containes_fake
+                rclpy.spin_once(self, timeout_sec=0.1)
 
-                    # wait for scanning time :
-                self.wait_for(scanning_duration)
+                    # wait for scanning time : 
+
+                if self.start_time is None:
+                    self.start_time = time.time()
+                    self.get_logger().info(f"scanning for {scanning_duration} second...")
+                while time.time() - self.start_time < scanning_duration:
+                    rclpy.spin_once(self, timeout_sec=0.05)
+                # Reset tracker and transition to a stop state
+                self.start_time = None 
 
 
 
@@ -268,15 +284,24 @@ class Compete(Node):
 
 
         if current_state == Status.move_forward_2 :
-            if d > 10:
-                move_forward = Twist()
-                move_forward.linear.x = max_linear # Positive x to move forward
-                self.move_for(move_forward, moving_forward_duration)
+            if d >= 10:
+                if self.start_time is None:
+                 self.start_time = time.time()
+                 self.get_logger().info(f"Moving forward for {moving_forward_duration} second...")
+                  
+                while time.time() - self.start_time < moving_forward_duration:
+                 move_forward = Twist()
+                 move_forward.linear.x = max_linear # Positive x to move forward
+                 self.cmd_vel_pub.publish(move_forward)
+                 rclpy.spin_once(self, timeout_sec=0.05)
                 self.get_logger().info("moved forward")
+                self.cmd_vel_pub.publish(Twist())
+                # Reset tracker and transition to a stop state
+                self.start_time = None 
             else :
                 self.cmd_vel_pub.publish(Twist())
-                # model disabled for now -- containes_real / containes_fake are
-                # hardcoded at the top of the file for testing
+                # and updates containes_real / containes_fake
+                rclpy.spin_once(self, timeout_sec=0.1)
             
         if containes_real == True and containes_fake == True: 
                 self.get_logger().info("MISSION COMPLETED !")
