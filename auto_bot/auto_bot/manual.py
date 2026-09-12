@@ -25,7 +25,7 @@ class ManualController(Node):
         self.speed_modes = {
               '1': (0.15, 0.5),
               '2': (2.0, 2.0),
-              '3': (8.0, 7.0)
+              '3': (5.0, 5.0)
              }
 
 
