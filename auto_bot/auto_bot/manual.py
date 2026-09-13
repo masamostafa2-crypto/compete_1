@@ -23,8 +23,8 @@ class ManualController(Node):
         
 
         self.speed_modes = {
-              '1': (0.15, 0.5),
-              '2': (2.0, 2.0),
+              '1': (8.0, 8.0),
+              '2': (8.0, 8.0),
               '3': (8.0, 7.0)
              }
 
@@ -161,13 +161,8 @@ class ManualController(Node):
 
         msg = Twist()
 
-        if self.emergency_stop:
-            msg.linear.x = 0.0
-            msg.angular.z = 0.0
-
-        else:
-            msg.linear.x = self.linear
-            msg.angular.z = self.angular
+        msg.linear.x = self.linear
+        msg.angular.z = self.angular
 
         self.cmd_vel_pub.publish(msg)
    

@@ -3,7 +3,7 @@ import math
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
 from ultralytics import YOLO
@@ -24,7 +24,7 @@ TIMEOUT = 5.0
 containes_real = False 
 containes_fake = False 
 moving_forward_duration =3.0
-moving_left_duration =3.0
+moving_left_duration =5.0
 localize_duration = 1.0
 
 
@@ -62,7 +62,7 @@ class Compete(Node):
         self.model = YOLO("/home/masa/Downloads/best.pt")
         self.real_class = "real"
         self.fake_class = "fake"
-        self.create_subscription(Image, '/mono/image', self.image_cb, 10)
+        self.create_subscription(CompressedImage, '/mono/image', self.image_cb, 10)
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.vis_pub = self.create_publisher(Image, '/compete/detections', 10)
 
@@ -119,7 +119,7 @@ class Compete(Node):
     def rotate(self, degrees):
         """Positive degrees = turn left (CCW), negative = turn right (CW)."""
         angle_rad = math.radians(degrees)
-        duration = (abs(angle_rad) * 1.1) / max_angular
+        duration = (abs(angle_rad) * 1.4) / max_angular
         cmd = Twist()
         cmd.angular.z = max_angular if degrees < 0 else -max_angular 
 
@@ -230,7 +230,7 @@ class Compete(Node):
 
 
         # moving forward 
-        if current_state == Status.fake_only or current_state == Status.real_only :
+        if (current_state == Status.fake_only or current_state == Status.real_only) and not self.force_manual :
             if d >= 10:
               if self.start_time is None:
                 self.start_time = time.time()
@@ -262,11 +262,56 @@ class Compete(Node):
 
         #rotating again to look for the other box 
 
-        if current_state  == Status.Rotate_90_2 : 
+        if current_state  == Status.Rotate_90_2 and not self.force_manual : 
                 self.get_logger().info(f"moving 90 degrees to face the boxes")
+
                 self.rotate(-90.0)
-                self.get_logger().info(f"rotated {rotated_angle} degrees")
+                self.get_logger().info(f"rotated {rotated_angle} degrees") 
                 self.cmd_vel_pub.publish(Twist())
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if self.start_time is None:
+                    self.start_time = time.time()
+                    self.get_logger().info(f"scanning for {scanning_duration} second...")
+                while time.time() - self.start_time < scanning_duration and not self.manual_requested():
+                    rclpy.spin_once(self, timeout_sec=0.05)
+                                # Reset tracker and transition to a stop state
+                self.start_time = None 
+               
+                self.rotate(180.0)
+                self.get_logger().info(f"rotated {rotated_angle} degrees") 
+                self.cmd_vel_pub.publish(Twist())
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if self.start_time is None:
+                    self.start_time = time.time()
+                    self.get_logger().info(f"scanning for {scanning_duration} second...")
+                while time.time() - self.start_time < scanning_duration and not self.manual_requested():
+                    rclpy.spin_once(self, timeout_sec=0.05)
+                                                # Reset tracker and transition to a stop state
+                self.start_time = None 
+                
+                self.rotate(-90.0)
+                self.cmd_vel_pub.publish(Twist())
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if self.start_time is None:
+                    self.start_time = time.time()
+                    self.get_logger().info(f"scanning for {scanning_duration} second...")
+                while time.time() - self.start_time < scanning_duration and not self.manual_requested():
+                    rclpy.spin_once(self, timeout_sec=0.05)
+                                                # Reset tracker and transition to a stop state
+                self.start_time = None 
+
+                self.rotate(90.0)
+                self.get_logger().info(f"rotated {rotated_angle} degrees") 
+                self.cmd_vel_pub.publish(Twist())
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if self.start_time is None:
+                    self.start_time = time.time()
+                    self.get_logger().info(f"scanning for {scanning_duration} second...")
+                while time.time() - self.start_time < scanning_duration and not self.manual_requested():
+                    rclpy.spin_once(self, timeout_sec=0.05)
+                                                # Reset tracker and transition to a stop state
+                self.start_time = None 
+            
                 self.get_logger().info('Looking for box...')
                     # and updates containes_real / containes_fake
                 rclpy.spin_once(self, timeout_sec=0.1)
@@ -306,7 +351,7 @@ class Compete(Node):
         # final chance moving forward to find the hidden box 
 
 
-        if current_state == Status.move_forward_2 :
+        if current_state == Status.move_forward_2 and not self.force_manual :
             if d >= 10:
                 if self.start_time is None:
                  self.start_time = time.time()
@@ -326,7 +371,11 @@ class Compete(Node):
                 # and updates containes_real / containes_fake
                 rclpy.spin_once(self, timeout_sec=0.1)
             
-        if containes_real == True and containes_fake == True: 
+        if self.force_manual:
+            # manual override always wins, regardless of what was detected --
+            # skip the detection summary entirely, it's meaningless here
+            current_state = Status.real_fake
+        elif containes_real == True and containes_fake == True: 
                 self.get_logger().info("MISSION COMPLETED !")
                 current_state = Status.real_fake
         elif containes_real == True and real == 0: # the other box got detected 
@@ -338,10 +387,6 @@ class Compete(Node):
         else : 
                 self.get_logger().info("mission failed , both boxes couldn't be found together ")
 
-        # manual override always wins, regardless of what was detected
-        if self.force_manual:
-            current_state = Status.real_fake
-
         if current_state == Status.real_fake :
             # 'manual' is already running as its own node via the launch
             # file, so we don't create another ManualController here --
@@ -352,6 +397,16 @@ class Compete(Node):
             self.cmd_vel_pub.publish(Twist())  # make sure the robot is stopped before handing over
 
         self.get_logger().info('Competition complete.')
+
+        # Keep the node alive and listening for 'k' even after the
+        # autonomous run has finished (mission complete or failed) --
+        # without this, the process would exit right away and the
+        # keyboard listener would stop working.
+        if not self.force_manual:
+            self.get_logger().info("Idle -- press 'k' at any time to switch to manual control.")
+        while not self.force_manual:
+            rclpy.spin_once(self, timeout_sec=0.1)
+
         return True
 
     def destroy_node(self):

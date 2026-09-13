@@ -17,7 +17,7 @@ qos_profile = QoSProfile(
 
 class cameraClass(Node): 
 
-    def __init__(self, camera_index = 0, publisher=False, server=False, topic_name="camera_topic", node_name="camera_node", service="camera_service", compressed = False):
+    def __init__(self, camera_index = 2, publisher=False, server=False, topic_name="camera_topic", node_name="camera_node", service="camera_service", compressed = False):
         super().__init__(node_name)
 
         self.topic_name = topic_name

@@ -27,7 +27,8 @@ setup(
         'console_scripts': [
           'compete = auto_bot.compete:main',
           'manual=auto_bot.manual:main',
-          'camera_node=auto_bot.camera_node:main'
+          'camera_node=auto_bot.camera_node:main',
+          'view_detection=auto_bot.view_detection:main'
         ],
     },
 )

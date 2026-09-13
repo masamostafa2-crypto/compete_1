@@ -1,8 +1,8 @@
 import cv2
 from ultralytics import YOLO
 
-MODEL_PATH = "/home/masa/Downloads/best.pt"   # update to the full path if it's not in the same folder
-CAMERA_INDEX = 0          # 0 is usually the default/built-in webcam; try 1, 2... if wrong
+MODEL_PATH = "/home/masa/Downloads/best1/best.pt"   # update to the full path if it's not in the same folder
+CAMERA_INDEX = 2       # 0 is usually the default/built-in webcam; try 1, 2... if wrong
 CONF_THRESHOLD = 0.60
 model = YOLO(MODEL_PATH)
 print("Model classes:", model.names)
