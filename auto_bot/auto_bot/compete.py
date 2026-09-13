@@ -132,6 +132,7 @@ class Compete(Node):
             # Under 1 second: Create and publish the left movement command
             move_left = Twist()
             move_left.linear.y = max_linear # Positive Y moves to the left
+            move_left.linear.x = max_linear # Positive x moves to the left
             self.cmd_vel_pub.publish(move_left)
             rclpy.spin_once(self, timeout_sec=0.05)
          self.get_logger().info("moved left")
