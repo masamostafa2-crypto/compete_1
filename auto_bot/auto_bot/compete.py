@@ -7,12 +7,13 @@ from sensor_msgs.msg import Image
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
 from ultralytics import YOLO
+from pynput import keyboard
 from enum import  Enum
 
 from auto_bot.manual import ManualController
 
 scanning_angle = 10.0
-scanning_duration = 0.5
+scanning_duration = 1.0
 rotated_angle = 0.0
 max_linear = 7.0
 max_angular = 7.0
@@ -22,9 +23,9 @@ TIMEOUT = 5.0
 #temporary conditions for boxes .CHANGE LATER 
 containes_real = False 
 containes_fake = False 
-moving_forward_duration =2.5
-moving_left_duration =2.0
-localize_duration = 0.5
+moving_forward_duration =3.0
+moving_left_duration =3.0
+localize_duration = 1.0
 
 
 class Status(Enum):
@@ -55,6 +56,7 @@ class Compete(Node):
         self.ultra_seen = False
         self.start_time = None
         self.d = None
+        self.force_manual = False
         self.create_subscription(Int32, '/ultrasonic_distance', self.ultra_cb, 10)
         self.bridge = CvBridge()
         self.model = YOLO("/home/masa/Downloads/best.pt")
@@ -63,6 +65,20 @@ class Compete(Node):
         self.create_subscription(Image, '/mono/image', self.image_cb, 10)
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.vis_pub = self.create_publisher(Image, '/compete/detections', 10)
+
+        # Global keyboard listener (same approach as manual.py) so 'k' is
+        # picked up regardless of how this node is launched -- unlike
+        # stdin-based reads, this doesn't need a real terminal/TTY.
+        self.key_listener = keyboard.Listener(on_press=self.on_key_press)
+        self.key_listener.start()
+
+    def on_key_press(self, key):
+        try:
+            if key.char and key.char.lower() == 'k' and not self.force_manual:
+                self.get_logger().info("Manual override key pressed -- switching to manual control")
+                self.force_manual = True
+        except AttributeError:
+            pass  # special keys (ctrl, shift, arrows, etc.) have no .char
 
     def ultra_cb(self, msg):
         self.ultra_seen = True
@@ -96,16 +112,20 @@ class Compete(Node):
                 return True
         return False
 
+    def manual_requested(self):
+        """True once the 'k' key has been pressed (set by on_key_press)."""
+        return self.force_manual
+
     def rotate(self, degrees):
         """Positive degrees = turn left (CCW), negative = turn right (CW)."""
         angle_rad = math.radians(degrees)
-        duration = (abs(angle_rad) * 1.2) / max_angular
+        duration = (abs(angle_rad) * 1.1) / max_angular
         cmd = Twist()
-        cmd.angular.z = -max_angular if degrees > 0 else max_angular 
+        cmd.angular.z = max_angular if degrees < 0 else -max_angular 
 
         self.get_logger().info(f'Rotating {degrees} degrees ({duration:.2f}s)')
         start = time.monotonic()
-        while time.monotonic() - start < duration:
+        while time.monotonic() - start < duration and not self.manual_requested():
             self.cmd_vel_pub.publish(cmd)
             time.sleep(0.1)
 
@@ -115,11 +135,13 @@ class Compete(Node):
         global rotated_angle, containes_real, containes_fake
         real = 0
         fake = 0
-        d = self.d
+    
         self.get_logger().info('Waiting for the robot to start...')
         if not self.wait_until(lambda: self.ultra_seen, TIMEOUT):
             self.get_logger().error('No /ultrasonic_distance -- robot did not start.')
             return False
+        self.get_logger().info("Press 'k' at any time to switch to manual control.")
+        d = self.d
         current_state = Status.moveLeft
         #moving left  - step1
 
@@ -128,7 +150,7 @@ class Compete(Node):
             self.start_time = time.time()
             self.get_logger().info("Moving left for 1 second...")
 
-         while time.time() - self.start_time < moving_left_duration :
+         while time.time() - self.start_time < moving_left_duration and not self.manual_requested():
             # Under 1 second: Create and publish the left movement command
             move_left = Twist()
             move_left.linear.y = max_linear # Positive Y moves to the left
@@ -144,7 +166,7 @@ class Compete(Node):
         if self.start_time is None:
           self.start_time = time.time()
           self.get_logger().info(f"scanning for {localize_duration} second...")             
-        while time.time() - self.start_time < localize_duration:
+        while time.time() - self.start_time < localize_duration and not self.manual_requested():
             rclpy.spin_once(self, timeout_sec=0.05)
         # Reset tracker and transition to a stop state
         self.start_time = None 
@@ -154,7 +176,7 @@ class Compete(Node):
 
         #scaning - step 2 :
         if current_state  == Status.Rotate_90_1 : 
-           while rotated_angle <=90.0 :
+           while rotated_angle <=90.0 and not self.manual_requested():
              count = 1
              self.get_logger().info(f"scanning .... moving{count} 10 degrees")
              rotated_angle +=10.0
@@ -172,7 +194,7 @@ class Compete(Node):
              if self.start_time is None:
                 self.start_time = time.time()
                 self.get_logger().info(f"scanning for {scanning_duration} second...")
-             while time.time() - self.start_time < scanning_duration:
+             while time.time() - self.start_time < scanning_duration and not self.manual_requested():
                  rclpy.spin_once(self, timeout_sec=0.05)
              # Reset tracker and transition to a stop state
              self.start_time = None 
@@ -214,7 +236,7 @@ class Compete(Node):
                 self.start_time = time.time()
                 self.get_logger().info(f"Moving forward for {moving_forward_duration} second...")
        
-              while time.time() - self.start_time < moving_forward_duration:
+              while time.time() - self.start_time < moving_forward_duration and not self.manual_requested():
                 move_forward = Twist()
                 move_forward.linear.x = max_linear # Positive x to move forward
                 self.cmd_vel_pub.publish(move_forward)
@@ -228,7 +250,7 @@ class Compete(Node):
               if self.start_time is None:
                 self.start_time = time.time()
                 self.get_logger().info(f"scanning for {localize_duration} second...")             
-              while time.time() - self.start_time < localize_duration:
+              while time.time() - self.start_time < localize_duration and not self.manual_requested():
                   rclpy.spin_once(self, timeout_sec=0.05)
               # Reset tracker and transition to a stop state
               self.start_time = None 
@@ -254,7 +276,7 @@ class Compete(Node):
                 if self.start_time is None:
                     self.start_time = time.time()
                     self.get_logger().info(f"scanning for {scanning_duration} second...")
-                while time.time() - self.start_time < scanning_duration:
+                while time.time() - self.start_time < scanning_duration and not self.manual_requested():
                     rclpy.spin_once(self, timeout_sec=0.05)
                 # Reset tracker and transition to a stop state
                 self.start_time = None 
@@ -290,7 +312,7 @@ class Compete(Node):
                  self.start_time = time.time()
                  self.get_logger().info(f"Moving forward for {moving_forward_duration} second...")
                   
-                while time.time() - self.start_time < moving_forward_duration:
+                while time.time() - self.start_time < moving_forward_duration and not self.manual_requested():
                  move_forward = Twist()
                  move_forward.linear.x = max_linear # Positive x to move forward
                  self.cmd_vel_pub.publish(move_forward)
@@ -315,21 +337,26 @@ class Compete(Node):
                 current_state = Status.real_fake
         else : 
                 self.get_logger().info("mission failed , both boxes couldn't be found together ")
-        
+
+        # manual override always wins, regardless of what was detected
+        if self.force_manual:
+            current_state = Status.real_fake
+
         if current_state == Status.real_fake :
-            #manual code switching
-            self.get_logger().info('Both boxes found -- stopping autonomous mode and switching to manual control.')
+            # 'manual' is already running as its own node via the launch
+            # file, so we don't create another ManualController here --
+            # doing so would try to register a second node with the same
+            # name and fight over /cmd_vel. Just stop driving and step
+            # aside; the existing manual node takes it from here.
+            self.get_logger().info('Both boxes found -- stopping autonomous mode and handing off to the manual node.')
             self.cmd_vel_pub.publish(Twist())  # make sure the robot is stopped before handing over
-            manual_node = ManualController()
-            try:
-                rclpy.spin(manual_node)
-            except KeyboardInterrupt:
-                pass
-            finally:
-                manual_node.destroy_node()
 
         self.get_logger().info('Competition complete.')
         return True
+
+    def destroy_node(self):
+        self.key_listener.stop()
+        super().destroy_node()
 
 
 def main():
